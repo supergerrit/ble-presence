@@ -50,10 +50,23 @@ static double pow(double x, double y)
 	return result;
 }
 
-double rssi_to_distance(int rssi, int rssi_1m)
+static int abs(int n)
 {
-	double d = pow(10, (rssi_1m - rssi) / (-10 * N));
-	return d;
+	if (n < 0)
+	{
+		return -n;
+	}
+	else
+	{
+		return n;
+	}
+}
+
+double calculate_distance(int rssi, int rssi_1m)
+{
+	double ratio = rssi * 1.0 / rssi_1m;
+	double distance = pow(10, (abs(ratio) - 0.4) / 2.0);
+	return distance;
 }
 
 // 33 1f 8d 59 c2 e5 4a a4 be 17 e0 a1 66 3f 0f 4c
@@ -70,23 +83,24 @@ static bool eir_found(struct bt_data *data, void *user_data)
 	// Vergelijk de advertentiedata met de gewenste iBeacon UUID
 	if (memcmp(&data->data[4], &uuid, sizeof(uuid) - 4) == 0)
 	{
-		gpio_pin_set_dt(&led_blue, 1);
+		gpio_pin_set_dt(&led, 1);
 		k_msleep(200);
-		gpio_pin_set_dt(&led_blue, 0);
+		gpio_pin_set_dt(&led, 0);
 		k_msleep(100);
 
 		struct scan_result *res = user_data;
+		uint8_t rssi_1m = data->data[24];
+		int16_t r = 0xFF00 + rssi_1m;
 
-		int rssi_1m = data->data[18] * -1;
-		double distance = rssi_to_distance(res->rssi, rssi_1m);
+		// double distance = calculate_distance(res->rssi, rssi_1m);
 
-		if (distance < 1)
+		if (res->rssi > r)
 		{
-			gpio_pin_set_dt(&led, 1);
+			gpio_pin_set_dt(&led_blue, 1);
 		}
 		else
 		{
-			gpio_pin_set_dt(&led, 0);
+			gpio_pin_set_dt(&led_blue, 0);
 		}
 
 		return false;
@@ -114,7 +128,7 @@ static void start_scan(void)
 	int err;
 
 	struct bt_le_scan_param scan_param = {
-		.type = BT_LE_SCAN_TYPE_ACTIVE,
+		.type = BT_LE_SCAN_TYPE_PASSIVE,
 		.options = BT_LE_SCAN_OPT_NONE,
 		.interval = BT_GAP_SCAN_FAST_INTERVAL,
 		.window = BT_GAP_SCAN_FAST_WINDOW,

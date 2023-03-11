@@ -69,6 +69,17 @@ double calculate_distance(int rssi, int rssi_1m)
 	return distance;
 }
 
+void blink_work_handler(struct k_work *work)
+{
+	gpio_pin_set_dt(&led, 1);
+	k_msleep(200);
+	gpio_pin_set_dt(&led, 0);
+	k_msleep(100);
+}
+
+K_WORK_DEFINE(blink_work, blink_work_handler);
+
+
 // Array met de UUID's van de sensoren
 uint8_t uuids[4][14] = {
     {0x33, 0x1f, 0x8d, 0x59, 0xc2, 0xe5, 0x4a, 0xa4, 0xbe, 0x17, 0xe0, 0xa1, 0x66, 0x3f}, // Jarno
@@ -91,10 +102,8 @@ static bool eir_found(struct bt_data *data, void *user_data)
 	{
 		if (memcmp(&data->data[4], &uuids[i], sizeof(uuids[i]) - 4) == 0)
 		{
-			gpio_pin_set_dt(&led, 1);
-			k_msleep(200);
-			gpio_pin_set_dt(&led, 0);
-			k_msleep(100);
+			// Blink led on beacon found
+			k_work_submit(&blink_work);
 
 			struct scan_result *res = user_data;
 			uint8_t rssi_1m = data->data[24];

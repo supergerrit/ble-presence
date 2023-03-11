@@ -69,41 +69,50 @@ double calculate_distance(int rssi, int rssi_1m)
 	return distance;
 }
 
-// 33 1f 8d 59 c2 e5 4a a4 be 17 e0 a1 66 3f 0f 4c
-uint8_t uuid[18] = {0x33, 0x1f, 0x8d, 0x59, 0xc2, 0xe5, 0x4a, 0xa4, 0xbe, 0x17, 0xe0, 0xa1, 0x66, 0x3f, 64, 00, 01, 00};
+// Array met de UUID's van de sensoren
+uint8_t uuids[4][14] = {
+    {0x33, 0x1f, 0x8d, 0x59, 0xc2, 0xe5, 0x4a, 0xa4, 0xbe, 0x17, 0xe0, 0xa1, 0x66, 0x3f}, // Jarno
+    {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88},
+    {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee},
+    {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54}
+};
+
 
 static bool eir_found(struct bt_data *data, void *user_data)
 {
-	// Controleer of het data typeBT_DATA_UUID128_SOME of BT_DATA_UUID128_ALL is
+	// Controleer of het data type overeenkomt met de gewenste iBeacon data
 	if (data->type != BT_DATA_MANUFACTURER_DATA)
 	{
 		return true;
 	}
 
 	// Vergelijk de advertentiedata met de gewenste iBeacon UUID
-	if (memcmp(&data->data[4], &uuid, sizeof(uuid) - 4) == 0)
+	for (int i = 0; i < 4; i++)
 	{
-		gpio_pin_set_dt(&led, 1);
-		k_msleep(200);
-		gpio_pin_set_dt(&led, 0);
-		k_msleep(100);
-
-		struct scan_result *res = user_data;
-		uint8_t rssi_1m = data->data[24];
-		int16_t r = 0xFF00 + rssi_1m;
-
-		// double distance = calculate_distance(res->rssi, rssi_1m);
-
-		if (res->rssi > r)
+		if (memcmp(&data->data[4], &uuids[i], sizeof(uuids[i]) - 4) == 0)
 		{
-			gpio_pin_set_dt(&led_blue, 1);
-		}
-		else
-		{
-			gpio_pin_set_dt(&led_blue, 0);
-		}
+			gpio_pin_set_dt(&led, 1);
+			k_msleep(200);
+			gpio_pin_set_dt(&led, 0);
+			k_msleep(100);
 
-		return false;
+			struct scan_result *res = user_data;
+			uint8_t rssi_1m = data->data[24];
+			int16_t r = 0xFF00 + rssi_1m;
+
+			// double distance = calculate_distance(res->rssi, rssi_1m);
+
+			if (res->rssi > r)
+			{
+				gpio_pin_set_dt(&led_blue, 1);
+			}
+			else
+			{
+				gpio_pin_set_dt(&led_blue, 0);
+			}
+
+			return false;
+		}
 	}
 
 	return true;

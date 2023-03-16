@@ -12,6 +12,9 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/sys/byteorder.h>
 
+#include <hal/nrf_aar.h>
+#include <hal/nrf_nvmc.h>
+
 #define N 2
 
 static void start_scan(void);
@@ -71,6 +74,77 @@ double calculate_distance(int rssi, int rssi_1m)
 
 // 33 1f 8d 59 c2 e5 4a a4 be 17 e0 a1 66 3f 0f 4c
 uint8_t uuid[18] = {0x33, 0x1f, 0x8d, 0x59, 0xc2, 0xe5, 0x4a, 0xa4, 0xbe, 0x17, 0xe0, 0xa1, 0x66, 0x3f, 64, 00, 01, 00};
+
+// iPad: 08 64 bc 2b 98 22 66 9d 0d 3c db f0 84 c3 20 e5
+static const uint8_t irks[2][16] = {
+	{0x08, 0x64, 0xbc, 0x2b, 0x98, 0x22, 0x66, 0x9d, 0x0d, 0x3c, 0xdb, 0xf0, 0x84, 0xc3, 0x20, 0xe5},
+	{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00},
+};
+
+uint8_t scratch_data[16];
+
+// Define a callback function for the AAR event handler
+void aar_event_handler(nrf_aar_event_t event)
+{
+	switch (event)
+	{
+	case NRF_AAR_EVENT_RESOLVED:
+		// Do something when address is resolved
+		nrf_aar_event_clear(NRF_AAR, NRF_AAR_EVENT_RESOLVED);
+		break;
+	default:
+		break;
+	}
+}
+
+void resolve_address_init()
+{
+	nrf_aar_enable(NRF_AAR);
+	nrf_aar_scratch_pointer_set(NRF_AAR, scratch_data);
+
+	// Set up IRK pointer and number
+	nrf_aar_irk_pointer_set(NRF_AAR, &irks);
+	nrf_aar_irk_number_set(NRF_AAR, 2);
+
+	// Enable interrupt for RESOLVED event
+	// nrf_aar_int_enable(NRF_AAR, NRF_AAR_INT_RESOLVED_MASK);
+
+	// Register callback function with NVIC
+	// NVIC_SetPriority(18, 3);
+	// NVIC_SetVector(18, (uint32_t)aar_event_handler);
+	// NVIC_EnableIRQ(18);
+}
+
+bool resolve_address(uint8_t const *addr_ptr)
+{
+	// Set up address pointer
+	nrf_aar_addr_pointer_set(NRF_AAR, addr_ptr);
+
+	// Start address resolution procedure
+	nrf_aar_task_trigger(NRF_AAR, NRF_AAR_TASK_START);
+
+	// Wait for resolution result
+	while (!nrf_aar_event_check(NRF_AAR, NRF_AAR_EVENT_END))
+		;
+
+	// Check if address was resolved
+	if (nrf_aar_event_check(NRF_AAR, NRF_AAR_EVENT_RESOLVED))
+	{
+		// Get index of matching IRK
+		uint8_t irk_index = nrf_aar_resolution_status_get(NRF_AAR);
+
+		// Clear RESOLVED event
+		nrf_aar_event_clear(NRF_AAR, NRF_AAR_EVENT_RESOLVED);
+
+		return true;
+	}
+	else if (nrf_aar_event_check(NRF_AAR, NRF_AAR_EVENT_NOTRESOLVED))
+	{
+		// Clear NOTRESOLVED event
+		nrf_aar_event_clear(NRF_AAR, NRF_AAR_EVENT_NOTRESOLVED);
+		return false;
+	}
+}
 
 static bool eir_found(struct bt_data *data, void *user_data)
 {
@@ -158,6 +232,8 @@ void main(void)
 	gpio_pin_set_dt(&led_blue, 1);
 	gpio_pin_set_dt(&led_green, 0);
 	gpio_pin_set_dt(&led_red, 0);
+
+	resolve_address_init();
 
 	k_msleep(1000);
 	gpio_pin_set_dt(&led_blue, 0);

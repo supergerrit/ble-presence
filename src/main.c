@@ -76,10 +76,13 @@ double calculate_distance(int rssi, int rssi_1m)
 uint8_t uuid[18] = {0x33, 0x1f, 0x8d, 0x59, 0xc2, 0xe5, 0x4a, 0xa4, 0xbe, 0x17, 0xe0, 0xa1, 0x66, 0x3f, 64, 00, 01, 00};
 
 // iPad: 08 64 bc 2b 98 22 66 9d 0d 3c db f0 84 c3 20 e5
-static const uint8_t irks[2][16] = {
+static const uint8_t irks[3][16] = {
 	{0x08, 0x64, 0xbc, 0x2b, 0x98, 0x22, 0x66, 0x9d, 0x0d, 0x3c, 0xdb, 0xf0, 0x84, 0xc3, 0x20, 0xe5},
-	{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00},
+	{0xe5, 0x20, 0xc3, 0x84, 0xf0, 0xdb, 0x3c, 0x0d, 0x9d, 0x66, 0x22, 0x98, 0x2b, 0xbc, 0x64, 0x08},
+	{0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0xA7, 0xB8, 0xC9, 0xD1, 0xE2, 0xF3, 0xA4, 0xB5, 0xC6, 0xD7},
 };
+
+uint8_t ipad[6] = {0x46, 0x90, 0xe7, 0xd4, 0xc7, 0x8b};
 
 uint8_t scratch_data[16];
 
@@ -100,11 +103,11 @@ void aar_event_handler(nrf_aar_event_t event)
 void resolve_address_init()
 {
 	nrf_aar_enable(NRF_AAR);
-	nrf_aar_scratch_pointer_set(NRF_AAR, scratch_data);
+	nrf_aar_scratch_pointer_set(NRF_AAR, &scratch_data);
 
 	// Set up IRK pointer and number
 	nrf_aar_irk_pointer_set(NRF_AAR, &irks);
-	nrf_aar_irk_number_set(NRF_AAR, 2);
+	nrf_aar_irk_number_set(NRF_AAR, 3);
 
 	// Enable interrupt for RESOLVED event
 	// nrf_aar_int_enable(NRF_AAR, NRF_AAR_INT_RESOLVED_MASK);
@@ -135,7 +138,6 @@ bool resolve_address(uint8_t const *addr_ptr)
 
 		// Clear RESOLVED event
 		nrf_aar_event_clear(NRF_AAR, NRF_AAR_EVENT_RESOLVED);
-
 		return true;
 	}
 	else if (nrf_aar_event_check(NRF_AAR, NRF_AAR_EVENT_NOTRESOLVED))
@@ -154,6 +156,42 @@ static bool eir_found(struct bt_data *data, void *user_data)
 		return true;
 	}
 
+	struct scan_result *res = user_data;
+	bt_addr_le_t *addr = res->addr;
+
+	if (addr->type == BT_ADDR_LE_RANDOM_ID || addr->type == BT_ADDR_LE_RANDOM)
+	{
+
+		nrf_aar_addr_pointer_set(NRF_AAR, &addr->a.val);
+		nrf_aar_task_trigger(NRF_AAR, NRF_AAR_TASK_START);
+
+		// Wait for resolution result
+		while (!nrf_aar_event_check(NRF_AAR, NRF_AAR_EVENT_END))
+			;
+
+		// Check if address was resolved
+		if (nrf_aar_event_check(NRF_AAR, NRF_AAR_EVENT_RESOLVED))
+		{
+			// Get index of matching IRK
+			uint8_t irk_index = nrf_aar_resolution_status_get(NRF_AAR);
+			// Clear RESOLVED event
+			nrf_aar_event_clear(NRF_AAR, NRF_AAR_EVENT_RESOLVED);
+			gpio_pin_set_dt(&led_red, 1);
+			return false;
+		}
+		else if (nrf_aar_event_check(NRF_AAR, NRF_AAR_EVENT_NOTRESOLVED))
+		{
+			// Clear NOTRESOLVED event
+			nrf_aar_event_clear(NRF_AAR, NRF_AAR_EVENT_NOTRESOLVED);
+			return true;
+		}
+	}
+
+	if (memcmp(&addr->a.val, &ipad, sizeof(ipad)) == 0)
+	{
+		gpio_pin_set_dt(&led_blue, 1);
+	}
+
 	// Vergelijk de advertentiedata met de gewenste iBeacon UUID
 	if (memcmp(&data->data[4], &uuid, sizeof(uuid) - 4) == 0)
 	{
@@ -162,7 +200,6 @@ static bool eir_found(struct bt_data *data, void *user_data)
 		gpio_pin_set_dt(&led, 0);
 		k_msleep(100);
 
-		struct scan_result *res = user_data;
 		uint8_t rssi_1m = data->data[24];
 		int16_t r = 0xFF00 + rssi_1m;
 
@@ -185,8 +222,7 @@ static bool eir_found(struct bt_data *data, void *user_data)
 
 static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type, struct net_buf_simple *ad)
 {
-
-	if (type == BT_GAP_ADV_TYPE_ADV_SCAN_IND)
+	if (type == BT_GAP_ADV_TYPE_ADV_SCAN_IND || type == BT_GAP_ADV_TYPE_ADV_IND)
 	{
 		struct scan_result res = {
 			.addr = addr,
@@ -234,6 +270,15 @@ void main(void)
 	gpio_pin_set_dt(&led_red, 0);
 
 	resolve_address_init();
+
+	uint8_t addr_1[6] = {0x4c, 0x93, 0x95, 0x8d, 0x66, 0xf9};
+	uint8_t addr_2[6] = {0xf9, 0x66, 0x8d, 0x95, 0x93, 0x4c};
+	uint8_t addr_3[6] = {0x46, 0x90, 0xe7, 0xd4, 0xc7, 0x8b};
+
+	if (resolve_address(addr_1) || resolve_address(addr_3) || resolve_address(&addr_3))
+	{
+		gpio_pin_set_dt(&led_green, 1);
+	}
 
 	k_msleep(1000);
 	gpio_pin_set_dt(&led_blue, 0);

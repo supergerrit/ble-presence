@@ -1,8 +1,8 @@
-#include <zephyr/types.h>
-#include <stddef.h>
-#include <errno.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/usb/usb_device.h>
+#include <zephyr/usb/usbd.h>
+#include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/gpio.h>
 
 #include <zephyr/bluetooth/bluetooth.h>
@@ -15,7 +15,23 @@
 #include <hal/nrf_aar.h>
 #include <hal/nrf_nvmc.h>
 
-#define N 2
+void setup_usb()
+{
+	const struct device *const dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+	uint32_t dtr = 0;
+
+	if (usb_enable(NULL))
+	{
+		return;
+	}
+
+	/* Poll if the DTR flag was set */
+	while (!dtr)
+	{
+		uart_line_ctrl_get(dev, UART_LINE_CTRL_DTR, &dtr);
+		k_sleep(K_MSEC(100));
+	}
+}
 
 static void start_scan(void);
 
@@ -103,10 +119,10 @@ void aar_event_handler(nrf_aar_event_t event)
 void resolve_address_init()
 {
 	nrf_aar_enable(NRF_AAR);
-	nrf_aar_scratch_pointer_set(NRF_AAR, &scratch_data);
+	nrf_aar_scratch_pointer_set(NRF_AAR, scratch_data);
 
 	// Set up IRK pointer and number
-	nrf_aar_irk_pointer_set(NRF_AAR, &irks);
+	nrf_aar_irk_pointer_set(NRF_AAR, &irks[0][0]);
 	nrf_aar_irk_number_set(NRF_AAR, 3);
 
 	// Enable interrupt for RESOLVED event
@@ -120,6 +136,9 @@ void resolve_address_init()
 
 bool resolve_address(uint8_t const *addr_ptr)
 {
+
+	printk("Resolving address: %02x:%02x:%02x:%02x:%02x:%02x\n", addr_ptr[0], addr_ptr[1], addr_ptr[2], addr_ptr[3], addr_ptr[4], addr_ptr[5]);
+
 	// Set up address pointer
 	nrf_aar_addr_pointer_set(NRF_AAR, addr_ptr);
 
@@ -135,6 +154,7 @@ bool resolve_address(uint8_t const *addr_ptr)
 	{
 		// Get index of matching IRK
 		uint8_t irk_index = nrf_aar_resolution_status_get(NRF_AAR);
+		printk("IRK index: %d\n", irk_index);
 
 		// Clear RESOLVED event
 		nrf_aar_event_clear(NRF_AAR, NRF_AAR_EVENT_RESOLVED);
@@ -144,13 +164,16 @@ bool resolve_address(uint8_t const *addr_ptr)
 	{
 		// Clear NOTRESOLVED event
 		nrf_aar_event_clear(NRF_AAR, NRF_AAR_EVENT_NOTRESOLVED);
+		printk("Address not resolved: %02x:%02x:%02x:%02x:%02x:%02x\n", addr_ptr[0], addr_ptr[1], addr_ptr[2], addr_ptr[3], addr_ptr[4], addr_ptr[5]);
 		return false;
 	}
+
+	return false;
 }
 
 static bool eir_found(struct bt_data *data, void *user_data)
 {
-	// Controleer of het data typeBT_DATA_UUID128_SOME of BT_DATA_UUID128_ALL is
+	// Controleer of het data type overeenkomt met het type dat we zoeken
 	if (data->type != BT_DATA_MANUFACTURER_DATA)
 	{
 		return true;
@@ -162,34 +185,13 @@ static bool eir_found(struct bt_data *data, void *user_data)
 	if (addr->type == BT_ADDR_LE_RANDOM_ID || addr->type == BT_ADDR_LE_RANDOM)
 	{
 
-		nrf_aar_addr_pointer_set(NRF_AAR, &addr->a.val);
-		nrf_aar_task_trigger(NRF_AAR, NRF_AAR_TASK_START);
+		// printk("Found address: %02x:%02x:%02x:%02x:%02x:%02x\n", addr->a.val[0], addr->a.val[1], addr->a.val[2], addr->a.val[3], addr->a.val[4], addr->a.val[5]);
 
-		// Wait for resolution result
-		while (!nrf_aar_event_check(NRF_AAR, NRF_AAR_EVENT_END))
-			;
-
-		// Check if address was resolved
-		if (nrf_aar_event_check(NRF_AAR, NRF_AAR_EVENT_RESOLVED))
+		if (resolve_address(addr->a.val))
 		{
-			// Get index of matching IRK
-			uint8_t irk_index = nrf_aar_resolution_status_get(NRF_AAR);
-			// Clear RESOLVED event
-			nrf_aar_event_clear(NRF_AAR, NRF_AAR_EVENT_RESOLVED);
 			gpio_pin_set_dt(&led_red, 1);
 			return false;
 		}
-		else if (nrf_aar_event_check(NRF_AAR, NRF_AAR_EVENT_NOTRESOLVED))
-		{
-			// Clear NOTRESOLVED event
-			nrf_aar_event_clear(NRF_AAR, NRF_AAR_EVENT_NOTRESOLVED);
-			return true;
-		}
-	}
-
-	if (memcmp(&addr->a.val, &ipad, sizeof(ipad)) == 0)
-	{
-		gpio_pin_set_dt(&led_blue, 1);
 	}
 
 	// Vergelijk de advertentiedata met de gewenste iBeacon UUID
@@ -208,6 +210,7 @@ static bool eir_found(struct bt_data *data, void *user_data)
 		if (res->rssi > r)
 		{
 			gpio_pin_set_dt(&led_blue, 1);
+			printk("Found iBeacon: %02x:%02x:%02x:%02x:%02x:%02x\n", addr->a.val[0], addr->a.val[1], addr->a.val[2], addr->a.val[3], addr->a.val[4], addr->a.val[5]);
 		}
 		else
 		{
@@ -256,8 +259,8 @@ static void start_scan(void)
 
 void main(void)
 {
-	int err;
-	err = bt_enable(NULL);
+	setup_usb();
+	bt_enable(NULL);
 
 	gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
 	gpio_pin_configure_dt(&led_blue, GPIO_OUTPUT_ACTIVE);
@@ -273,9 +276,19 @@ void main(void)
 
 	uint8_t addr_1[6] = {0x4c, 0x93, 0x95, 0x8d, 0x66, 0xf9};
 	uint8_t addr_2[6] = {0xf9, 0x66, 0x8d, 0x95, 0x93, 0x4c};
-	uint8_t addr_3[6] = {0x46, 0x90, 0xe7, 0xd4, 0xc7, 0x8b};
+	uint8_t addr_3[6] = {0x65, 0x2d, 0x8f, 0x09, 0xec, 0x4b};
 
-	if (resolve_address(addr_1) || resolve_address(addr_3) || resolve_address(&addr_3))
+	if (resolve_address(addr_1))
+	{
+		gpio_pin_set_dt(&led_green, 1);
+	}
+
+	if (resolve_address(addr_2))
+	{
+		gpio_pin_set_dt(&led_green, 1);
+	}
+
+	if (resolve_address(addr_3))
 	{
 		gpio_pin_set_dt(&led_green, 1);
 	}
@@ -283,4 +296,6 @@ void main(void)
 	k_msleep(1000);
 	gpio_pin_set_dt(&led_blue, 0);
 	start_scan();
+
+	printk("Device started successfully");
 }

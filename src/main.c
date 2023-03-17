@@ -13,13 +13,22 @@
 #include <zephyr/sys/byteorder.h>
 
 #define N 2
+#define DETECT_PIN 17
+#define DEBUG_LEDS true
 
 static void start_scan(void);
+
+struct device *dev;
+
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led_green = GPIO_DT_SPEC_GET(DT_ALIAS(led1_green), gpios);
 static const struct gpio_dt_spec led_red = GPIO_DT_SPEC_GET(DT_ALIAS(led1_red), gpios);
 static const struct gpio_dt_spec led_blue = GPIO_DT_SPEC_GET(DT_ALIAS(led1_blue), gpios);
+
+int64_t last_beacon = 0;
+int64_t last_beacon_in_range = 0;
+bool in_range = false;
 
 struct scan_result
 {
@@ -69,6 +78,7 @@ double calculate_distance(int rssi, int rssi_1m)
 	return distance;
 }
 
+// Work handlers
 void blink_work_handler(struct k_work *work)
 {
 	gpio_pin_set_dt(&led, 1);
@@ -77,13 +87,35 @@ void blink_work_handler(struct k_work *work)
 	k_msleep(100);
 }
 
+void check_beacon_timeout_work_handler(struct k_work *work)
+{
+	int64_t now = k_uptime_get();
+	if (now - last_beacon_in_range > 10000 && in_range)
+	{
+		in_range = false;
+		gpio_pin_set_dt(&led_red, 0);
+		// gpio_pin_set(dev, DETECT_PIN, 0);
+	}
+}
+
+// Work definitions
 K_WORK_DEFINE(blink_work, blink_work_handler);
+K_WORK_DEFINE(check_beacon_timeout_work, check_beacon_timeout_work_handler);
+
+// Timer definitions
+void beacon_timeout_timer_handler(struct k_timer *dummy)
+{
+    k_work_submit(&check_beacon_timeout_work);
+}
+
+K_TIMER_DEFINE(beacon_timeout_timer, beacon_timeout_timer_handler, NULL);
 
 
 // Array met de UUID's van de sensoren
+// 58 06 06 0B 23 74 46 89 96 6F 72 2F 1B 55 C1 CA
 uint8_t uuids[4][14] = {
     {0x33, 0x1f, 0x8d, 0x59, 0xc2, 0xe5, 0x4a, 0xa4, 0xbe, 0x17, 0xe0, 0xa1, 0x66, 0x3f}, // Jarno
-    {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88},
+    {0x58, 0x06, 0x06, 0x0b, 0x23, 0x74, 0x46, 0x89, 0x96, 0x6f, 0x72, 0x2f, 0x1b, 0x55}, // Gejo
     {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee},
     {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54}
 };
@@ -104,6 +136,7 @@ static bool eir_found(struct bt_data *data, void *user_data)
 		{
 			// Blink led on beacon found
 			k_work_submit(&blink_work);
+			last_beacon = k_uptime_get();
 
 			struct scan_result *res = user_data;
 			uint8_t rssi_1m = data->data[24];
@@ -114,6 +147,10 @@ static bool eir_found(struct bt_data *data, void *user_data)
 			if (res->rssi > r)
 			{
 				gpio_pin_set_dt(&led_blue, 1);
+				gpio_pin_set_dt(&led_red, 1);
+				// gpio_pin_set(dev, DETECT_PIN, 1);
+				last_beacon_in_range = k_uptime_get();
+				in_range = true;
 			}
 			else
 			{
@@ -167,6 +204,9 @@ void main(void)
 	int err;
 	err = bt_enable(NULL);
 
+	dev = device_get_binding("GPIO_0");
+	// gpio_pin_configure(dev, DETECT_PIN, GPIO_OUTPUT);
+
 	gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
 	gpio_pin_configure_dt(&led_blue, GPIO_OUTPUT_ACTIVE);
 	gpio_pin_configure_dt(&led_green, GPIO_OUTPUT_ACTIVE);
@@ -176,8 +216,13 @@ void main(void)
 	gpio_pin_set_dt(&led_blue, 1);
 	gpio_pin_set_dt(&led_green, 0);
 	gpio_pin_set_dt(&led_red, 0);
+	// gpio_pin_set(dev, DETECT_PIN, 0);
 
 	k_msleep(1000);
 	gpio_pin_set_dt(&led_blue, 0);
 	start_scan();
+
+	last_beacon = k_uptime_get();
+	last_beacon_in_range = k_uptime_get();
+	k_timer_start(&beacon_timeout_timer, K_SECONDS(1), K_SECONDS(1));
 }

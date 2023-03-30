@@ -1,25 +1,44 @@
-.. _bluetooth_central_hr:
+.. _cdc-acm-console:
 
-Bluetooth: Central / Heart-rate Monitor
-#######################################
+Console over CDC ACM UART Sample
+################################
 
 Overview
 ********
 
-Similar to the :ref:`Central <bluetooth_central>` sample, except that this
-application specifically looks for heart-rate monitors and reports the
-heart-rate readings once connected.
+A simple Hello World sample, with console output coming via CDC ACM UART.
+Primarily intended to show the required config options.
 
 Requirements
 ************
 
-* BlueZ running on the host, or
-* A board with BLE support
+This project requires a USB device controller driver.
 
 Building and Running
 ********************
 
-This sample can be found under :zephyr_file:`samples/bluetooth/central_hr` in the
-Zephyr tree.
+This sample can be built for multiple boards, in this example we will build it
+for the reel_board board:
 
-See :ref:`bluetooth samples section <bluetooth-samples>` for details.
+.. zephyr-app-commands::
+   :zephyr-app: samples/subsys/usb/console
+   :board: reel_board
+   :goals: flash
+   :compact:
+
+Plug the board into a host device, for sample, a PC running Linux OS.
+The board will be detected as a CDC_ACM serial device. To see the console output
+from the sample, use a command similar to "minicom -D /dev/ttyACM0".
+
+.. code-block:: console
+
+   Hello World! arm
+   Hello World! arm
+   Hello World! arm
+   Hello World! arm
+
+Troubleshooting
+===============
+
+You may need to stop modemmanager via "sudo stop modemmanager", if it is
+trying to access the device in the background.

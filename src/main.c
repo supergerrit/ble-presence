@@ -15,18 +15,35 @@
 #include <psa/crypto.h>
 #include <psa/crypto_extra.h>
 
-#define NUM_IRKS 3
+#define debug true
+
+#define NUM_IRKS 2
+#define NUM_BEACONS 2
 #define RSSI_1M_APPLE -60
+
+#define JARNO_PIN 15
+#define IVO_PIN 17
+#define GEJO_PIN 20
+#define INGE_PIN 22
+#define NUM_PERSONS 4
+
+enum persons
+{
+	JARNO,
+	IVO,
+	GEJO,
+	INGE
+};
+int8_t pins[NUM_PERSONS] = {JARNO_PIN, IVO_PIN, GEJO_PIN, INGE_PIN};
+
+const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(gpio0));
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led_green = GPIO_DT_SPEC_GET(DT_ALIAS(led1_green), gpios);
 static const struct gpio_dt_spec led_red = GPIO_DT_SPEC_GET(DT_ALIAS(led1_red), gpios);
 static const struct gpio_dt_spec led_blue = GPIO_DT_SPEC_GET(DT_ALIAS(led1_blue), gpios);
 
-struct device *dev;
-int64_t last_beacon = 0;
-int64_t last_beacon_in_range = 0;
-bool in_range = false;
+int64_t last_beacon[NUM_PERSONS] = {0, 0, 0, 0};
 
 // Work handlers
 void blink_work_handler(struct k_work *work)
@@ -40,11 +57,13 @@ void blink_work_handler(struct k_work *work)
 void check_beacon_timeout_work_handler(struct k_work *work)
 {
 	int64_t now = k_uptime_get();
-	if (now - last_beacon_in_range > 10000 && in_range)
+
+	for (int i = 0; i < NUM_PERSONS; i++)
 	{
-		in_range = false;
-		gpio_pin_set_dt(&led_red, 0);
-		// gpio_pin_set(dev, DETECT_PIN, 0);
+		if (now - last_beacon[i] > 5000)
+		{
+			gpio_pin_set(dev, pins[i], 0);
+		}
 	}
 }
 
@@ -70,12 +89,14 @@ void setup_usb()
 		return;
 	}
 
-	/* Poll if the DTR flag was set */
+/* Poll if the DTR flag was set */
+#ifdef debug
 	while (!dtr)
 	{
 		uart_line_ctrl_get(dev, UART_LINE_CTRL_DTR, &dtr);
 		k_sleep(K_MSEC(100));
 	}
+#endif
 }
 
 void print_hex(uint8_t *data, size_t len)
@@ -149,13 +170,15 @@ double calculate_distance(int rssi, int rssi_1m)
 }
 
 // iBeacons
-uint8_t uuid[18] = {0x33, 0x1f, 0x8d, 0x59, 0xc2, 0xe5, 0x4a, 0xa4, 0xbe, 0x17, 0xe0, 0xa1, 0x66, 0x3f, 64, 00, 01, 00};
+uint8_t uuids[NUM_BEACONS][18] = {
+	{0x33, 0x1f, 0x8d, 0x59, 0xc2, 0xe5, 0x4a, 0xa4, 0xbe, 0x17, 0xe0, 0xa1, 0x66, 0x3f, 64, 00, 01, 00},
+	{0x34, 0x1f, 0x8d, 0x59, 0xc2, 0xe5, 0x4a, 0xa4, 0xbe, 0x17, 0xe0, 0xa1, 0x66, 0x3f, 64, 00, 01, 02},
+};
 
 // IRKs
 uint8_t irks[NUM_IRKS][16] = {
 	{0x08, 0x64, 0xbc, 0x2b, 0x98, 0x22, 0x66, 0x9d, 0x0d, 0x3c, 0xdb, 0xf0, 0x84, 0xc3, 0x20, 0xe5},
 	{0xe5, 0x20, 0xc3, 0x84, 0xf0, 0xdb, 0x3c, 0x0d, 0x9d, 0x66, 0x22, 0x98, 0x2b, 0xbc, 0x64, 0x08},
-	{0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0xA7, 0xB8, 0xC9, 0xD1, 0xE2, 0xF3, 0xA4, 0xB5, 0xC6, 0xD7},
 };
 
 psa_key_id_t key_ids[NUM_IRKS];
@@ -219,7 +242,7 @@ void ah(mbedtls_svc_key_id_t key_id, uint8_t *p_r, uint8_t *p_local_hash)
 	}
 }
 
-bool resolve_address(uint8_t *p_addr)
+int resolve_address(uint8_t *p_addr)
 {
 
 	uint8_t hash[3];
@@ -235,10 +258,10 @@ bool resolve_address(uint8_t *p_addr)
 		if (memcmp(hash, local_hash, 3) == 0)
 		{
 			printk("Match id: %d\n", i);
-			return true;
+			return i;
 		}
 	}
-	return false;
+	return -1;
 }
 
 static bool eir_found(struct bt_data *data, void *user_data)
@@ -254,29 +277,20 @@ static bool eir_found(struct bt_data *data, void *user_data)
 
 	if (addr->type == BT_ADDR_LE_RANDOM_ID || addr->type == BT_ADDR_LE_RANDOM)
 	{
-		// printk("Resolving...: %02x:%02x:%02x:%02x:%02x:%02x\n", addr->a.val[0], addr->a.val[1], addr->a.val[2], addr->a.val[3], addr->a.val[4], addr->a.val[5]);
-
-		if (resolve_address(addr->a.val))
+		int id = resolve_address(addr->a.val);
+		if (id != -1)
 		{
-			// gpio_pin_set_dt(&led_red, 1);
 			printk("Found resolved address: ");
 			print_hex(addr->a.val, 6);
 
 			// Blink led on beacon found
 			k_work_submit(&blink_work);
-			last_beacon = k_uptime_get();
 
 			if (res->rssi > RSSI_1M_APPLE)
 			{
-				gpio_pin_set_dt(&led_blue, 1);
-				gpio_pin_set_dt(&led_red, 1);
-				last_beacon_in_range = k_uptime_get();
-				in_range = true;
+				last_beacon[NUM_BEACONS + id] = k_uptime_get();
+				gpio_pin_set(dev, pins[NUM_BEACONS + id], 1);
 				printk("RSSI: %d\n", res->rssi);
-			}
-			else
-			{
-				gpio_pin_set_dt(&led_blue, 0);
 			}
 
 			return false;
@@ -284,31 +298,28 @@ static bool eir_found(struct bt_data *data, void *user_data)
 	}
 
 	// Vergelijk de advertentiedata met de gewenste iBeacon UUID
-	if (memcmp(&data->data[4], &uuid, sizeof(uuid) - 4) == 0)
+	for (int i = 0; i < NUM_BEACONS; i++)
 	{
-		// Blink led on beacon found
-		k_work_submit(&blink_work);
-		last_beacon = k_uptime_get();
-
-		uint8_t rssi_1m = data->data[24];
-		int16_t r = 0xFF00 + rssi_1m;
-
-		// double distance = calculate_distance(res->rssi, rssi_1m);
-
-		if (res->rssi > r)
+		if (memcmp(&data->data[4], uuids[i], sizeof(uuids[i]) - 4) == 0)
 		{
-			gpio_pin_set_dt(&led_blue, 1);
-			gpio_pin_set_dt(&led_red, 1);
-			last_beacon_in_range = k_uptime_get();
-			in_range = true;
-			printk("Found iBeacon: %02x:%02x:%02x:%02x:%02x:%02x\n", addr->a.val[0], addr->a.val[1], addr->a.val[2], addr->a.val[3], addr->a.val[4], addr->a.val[5]);
-		}
-		else
-		{
-			gpio_pin_set_dt(&led_blue, 0);
-		}
+			// Blink led on beacon found
+			k_work_submit(&blink_work);
 
-		return false;
+			uint8_t rssi_1m = data->data[24];
+			int16_t r = 0xFF00 + rssi_1m;
+
+			// double distance = calculate_distance(res->rssi, rssi_1m);
+
+			if (res->rssi > r)
+			{
+				last_beacon[i] = k_uptime_get();
+				gpio_pin_set(dev, pins[i], 1);
+				printk("Found iBeacon: %02x:%02x:%02x:%02x:%02x:%02x\n", addr->a.val[0], addr->a.val[1], addr->a.val[2], addr->a.val[3], addr->a.val[4], addr->a.val[5]);
+				printk("Match id: %d\n", i);
+			}
+
+			return false;
+		}
 	}
 
 	return true;
@@ -370,12 +381,20 @@ void main(void)
 	gpio_pin_set_dt(&led_green, 0);
 	gpio_pin_set_dt(&led_red, 0);
 
+	gpio_pin_configure(dev, JARNO_PIN, GPIO_OUTPUT);
+	gpio_pin_configure(dev, IVO_PIN, GPIO_OUTPUT);
+	gpio_pin_configure(dev, GEJO_PIN, GPIO_OUTPUT);
+	gpio_pin_configure(dev, INGE_PIN, GPIO_OUTPUT);
+
+	gpio_pin_set(dev, JARNO_PIN, 0);
+	gpio_pin_set(dev, IVO_PIN, 0);
+	gpio_pin_set(dev, GEJO_PIN, 0);
+	gpio_pin_set(dev, INGE_PIN, 0);
+
 	k_msleep(1000);
 	gpio_pin_set_dt(&led_blue, 0);
 	start_scan();
 
-	last_beacon = k_uptime_get();
-	last_beacon_in_range = k_uptime_get();
 	k_timer_start(&beacon_timeout_timer, K_SECONDS(1), K_SECONDS(1));
 
 	printk("Device started successfully\n");

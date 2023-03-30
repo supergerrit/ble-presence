@@ -4,5 +4,7 @@
 
 # build
 /build*/
-.vscode/
-*.zip
+
+package.zip
+
+.vscode/*

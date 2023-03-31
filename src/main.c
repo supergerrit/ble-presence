@@ -15,28 +15,19 @@
 #include <psa/crypto.h>
 #include <psa/crypto_extra.h>
 
-#define debug true
-
 #define NUM_IRKS 2
 #define NUM_BEACONS 2
-#define RSSI_1M_APPLE -58
+#define RSSI_1M_APPLE -52
 
-#define JARNO_PIN 15
-#define IVO_PIN 17
-#define GEJO_PIN 20
-#define INGE_PIN 22
+#define JARNO_PIN 10
+#define IVO_PIN 13
+#define GEJO_PIN 15
+#define INGE_PIN 0
 #define NUM_PERSONS 4
 
-enum persons
-{
-	JARNO,
-	IVO,
-	GEJO,
-	INGE
-};
 int8_t pins[NUM_PERSONS] = {JARNO_PIN, IVO_PIN, GEJO_PIN, INGE_PIN};
 
-const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(gpio0));
+const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(gpio1));
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led_green = GPIO_DT_SPEC_GET(DT_ALIAS(led1_green), gpios);
@@ -60,7 +51,7 @@ void check_beacon_timeout_work_handler(struct k_work *work)
 
 	for (int i = 0; i < NUM_PERSONS; i++)
 	{
-		if (now - last_beacon[i] > 5000)
+		if (now - last_beacon[i] > 6000)
 		{
 			gpio_pin_set(dev, pins[i], 0);
 		}
@@ -257,7 +248,6 @@ int resolve_address(uint8_t *p_addr)
 		ah(key_ids[i], prand, local_hash);
 		if (memcmp(hash, local_hash, 3) == 0)
 		{
-			printk("Match id: %d\n", i);
 			return i;
 		}
 	}
@@ -280,9 +270,6 @@ static bool eir_found(struct bt_data *data, void *user_data)
 		int id = resolve_address(addr->a.val);
 		if (id != -1)
 		{
-			printk("Found resolved address: ");
-			print_hex(addr->a.val, 6);
-
 			// Blink led on beacon found
 			k_work_submit(&blink_work);
 
@@ -290,7 +277,8 @@ static bool eir_found(struct bt_data *data, void *user_data)
 			{
 				last_beacon[NUM_BEACONS + id] = k_uptime_get();
 				gpio_pin_set(dev, pins[NUM_BEACONS + id], 1);
-				printk("RSSI: %d\n", res->rssi);
+				printk("Found RPA: %02x:%02x:%02x:%02x:%02x:%02x\n", addr->a.val[0], addr->a.val[1], addr->a.val[2], addr->a.val[3], addr->a.val[4], addr->a.val[5]);
+				printk("RSSI: %d --> ID: %d --> Pin: %d\n", res->rssi, NUM_BEACONS + id, pins[NUM_BEACONS + id]);
 			}
 
 			return false;
@@ -315,7 +303,7 @@ static bool eir_found(struct bt_data *data, void *user_data)
 				last_beacon[i] = k_uptime_get();
 				gpio_pin_set(dev, pins[i], 1);
 				printk("Found iBeacon: %02x:%02x:%02x:%02x:%02x:%02x\n", addr->a.val[0], addr->a.val[1], addr->a.val[2], addr->a.val[3], addr->a.val[4], addr->a.val[5]);
-				printk("Match id: %d\n", i);
+				printk("RSSI: %d --> ID: %d\n", res->rssi, i);
 			}
 
 			return false;

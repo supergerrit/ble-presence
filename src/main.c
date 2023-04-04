@@ -17,7 +17,7 @@
 
 #define NUM_IRKS 2
 #define NUM_BEACONS 2
-#define RSSI_1M_APPLE -52
+#define RSSI_1M_APPLE -58
 
 #define JARNO_PIN 10
 #define IVO_PIN 13
@@ -35,6 +35,7 @@ static const struct gpio_dt_spec led_red = GPIO_DT_SPEC_GET(DT_ALIAS(led1_red), 
 static const struct gpio_dt_spec led_blue = GPIO_DT_SPEC_GET(DT_ALIAS(led1_blue), gpios);
 
 int64_t last_beacon[NUM_PERSONS] = {0, 0, 0, 0};
+int16_t rssi_apple_1m = RSSI_1M_APPLE;
 
 // Work handlers
 void blink_work_handler(struct k_work *work)
@@ -273,7 +274,7 @@ static bool eir_found(struct bt_data *data, void *user_data)
 			// Blink led on beacon found
 			k_work_submit(&blink_work);
 
-			if (res->rssi > RSSI_1M_APPLE)
+			if (res->rssi > rssi_apple_1m)
 			{
 				last_beacon[NUM_BEACONS + id] = k_uptime_get();
 				gpio_pin_set(dev, pins[NUM_BEACONS + id], 1);
@@ -304,6 +305,13 @@ static bool eir_found(struct bt_data *data, void *user_data)
 				gpio_pin_set(dev, pins[i], 1);
 				printk("Found iBeacon: %02x:%02x:%02x:%02x:%02x:%02x\n", addr->a.val[0], addr->a.val[1], addr->a.val[2], addr->a.val[3], addr->a.val[4], addr->a.val[5]);
 				printk("RSSI: %d --> ID: %d\n", res->rssi, i);
+			}
+
+			// Set new Apple RSSI values
+			if (i == 0) // Jarno
+			{
+				uint8_t rssi_1m_val = data->data[26];
+				rssi_apple_1m = 0xFF00 + rssi_1m_val;
 			}
 
 			return false;

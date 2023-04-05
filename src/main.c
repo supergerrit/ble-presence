@@ -310,8 +310,11 @@ static bool eir_found(struct bt_data *data, void *user_data)
 			// Set new Apple RSSI values
 			if (i == 0) // Jarno
 			{
-				uint8_t rssi_1m_val = data->data[26];
-				rssi_apple_1m = 0xFF00 + rssi_1m_val;
+				int8_t rssi_1m_val = data->data[21] * -1;
+				if (rssi_1m_val != rssi_apple_1m){
+					rssi_apple_1m = rssi_1m_val;
+					printk("Set new RSSI_1m: %d\n", rssi_apple_1m);
+				}
 			}
 
 			return false;

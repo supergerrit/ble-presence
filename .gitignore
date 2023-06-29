@@ -1,0 +1,12 @@
+# editors
+*.swp
+*~
+
+# build
+/build*/
+
+package.zip
+
+.vscode/*
+
+src/config.h

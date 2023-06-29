@@ -1,0 +1,13 @@
+# NRF52840 based BLE presence detection
+NRF52840 (Dongle) based BLE presence detection. The program will take a list of iBeacon values and IRKs (Identiy resolving keys) and will quickly toggle ouput pins depending on the proximity of the device. This way BLE presence detection can be linked to basically any automation system without the need for network or a central server. For example I'm using it to automatically unlock a door, when I'm approaching it. Furthermore and advantage of this compared to [ESPresence](https://espresense.com/) is the reaction speed. The pins will trigger almost instantly when a device comes into range. This is not the case with ESPresence, which has a significant detection delay, making it unsuitable for unlocking doors. Don’t use it for anything security sensitive since the iBeacons and MAC addresses can be easily spoofed.
+
+## Usage
+1. Copy `config.h.sample` to `config.h`
+2. Adjust the pin settings in `config.h` to match your own pins, the current pin assignment is tested and confirmed to work with the NRF52840 Dongle
+3. Enter your own iBeacon UUIDs and IRks into the `config.h` file.
+4. Run `build-and-run.sh` to compile the firmware and flash it to your device.
+
+## How to obtain iBeacon UUIDs and IRKs
+To obtain the iBeacon UUIDs required for presence detection, I am currently using the BLE transmit function of the Home Assistant Android app, this will transmit iBeacons with a set interval and transmission strength. Just copy the UUID given by the app and enter it in HEX format into `config.h`. However it is not strictly necessary to use the Home Assistant app, basically anything that transmits iBeacons can be used, like those tracker tiles. One can use the NRF Connect app to obtain the required iBeacon values.
+
+iBeacon transmission is unfortunately not available on iOS devices, therefore we have to rely on the IRK (Identity resolving key) values. This is a key that can be used to identify the randomized MAC addresses transmitted by iOS devices and link them to a certain device. In order to obtain this key, a bond first needs to be established between the device. Since I was already using [ESPresence](https://espresense.com/), I used this to extract the IRK values, by creating a bond between the ESP and the iOS device, one can then read out the IRK values via MQTT. There are probably more methods of obtaining the IRK, however this was the most convenient for me.
